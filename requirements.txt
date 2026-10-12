@@ -1,3 +1,4 @@
 openai
 python-dotenv
 neuronum
+jsonschema>=4.23,<5

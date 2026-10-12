@@ -28,14 +28,49 @@ MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "512"))
 TEMPERATURE = float(os.environ.get("TEMPERATURE", "0.3"))
 
 
-def call_model(system: str, history: list[dict]) -> dict:
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "system", "content": system}] + history,
-        max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
-    )
-    raw = response.choices[0].message.content.strip()
+def call_model(system: str, history: list[dict], tools: list[dict] | None = None) -> dict:
+    request = {
+        "model": MODEL_NAME,
+        "messages": [{"role": "system", "content": system}] + history,
+        "max_tokens": MAX_TOKENS,
+        "temperature": TEMPERATURE,
+    }
+    if tools:
+        request["tools"] = tools
+        request["tool_choice"] = "auto"
+
+    response = client.chat.completions.create(**request)
+    message = response.choices[0].message
+
+    if message.tool_calls:
+        assistant_message = {
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ],
+        }
+        return {
+            "_assistant_message": assistant_message,
+            "_tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments,
+                }
+                for tool_call in message.tool_calls
+            ],
+        }
+
+    raw = (message.content or "").strip()
     return _parse_response(raw)
 
 
@@ -47,6 +82,8 @@ def _parse_response(raw: str) -> dict:
                 raw = raw[4:]
             raw = raw.strip()
         parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            return {"msg": raw}
         if isinstance(parsed.get("msg"), str) and not parsed.get("element"):
             inner = parsed["msg"].strip()
             if inner.startswith("{"):
